@@ -29,14 +29,14 @@ def print_id_usage():
     colors = ['\033[31m','\033[32m','\033[33m','\033[34m','\033[35m','\033[36m',
               '\033[91m','\033[92m','\033[93m','\033[94m','\033[95m','\033[96m']
     functionColors = {None:"\033[0m",}
-    for item in set(serializer.decoders.values()):
+    for item in set(serializer._decoders.values()):
         color = colors.pop()
         functionColors[item]=color
         print(color+str(item)+"\033[0m")
     print("Available Ids")
     for i in range(256):
         h = hex(i).ljust(5)
-        function = serializer.decoders.get(i,None)
+        function = serializer._decoders.get(i,None)
         c = functionColors[function]
         print(c+h+"\033[0m",end="")
     print("\n\n")
@@ -58,3 +58,31 @@ for sample in sampleData:
         print("----")
         traceback.print_exc()
 #        raise
+import time
+
+start = time.monotonic()
+for i in range(100):
+    d = tuple(map(encode,sampleData))
+    f = tuple(map(decode,d))
+end = time.monotonic()
+print("100 samples:",end-start)
+print("average: ",(end-start)/100)
+
+print("brine test ----")
+from rpyc.core.brine import dump, load
+start = time.monotonic()
+for i in range(100):
+    d = tuple(map(dump,sampleData))
+    f = tuple(map(load,d))
+end = time.monotonic()
+print("100 samples:",end-start)
+print("average: ",(end-start)/100)
+
+print("msgpack test ---")
+start = time.monotonic()
+for i in range(100):
+    d = tuple(map(msgpack.packb,sampleData))
+    f = tuple(map(msgpack.unpackb,d))
+end = time.monotonic()
+print("100 samples:",end-start)
+print("average: ",(end-start)/100)

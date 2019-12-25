@@ -17,30 +17,30 @@ from typing import get_type_hints
 
 class Serializer:
     def __init__(self):
-        self.decoders = dict()
-        self.encoders = dict()
+        self._decoders = dict()
+        self._encoders = dict()
 
     def decode(self, data: bytes, internal=False):
-        data, out = self.decoders[data[0]](self, data)
+        data, out = self._decoders[data[0]](self, data)
         if internal: return data, out
         return out
 
     def encode(self, obj):
-        out = self.encoders[type(obj)](self, obj)
+        out = self._encoders[type(obj)](self, obj)
         return out
 
     def encode_register(self, func):
         argname, cls = next(iter(get_type_hints(func).items()))
-        self.encoders[cls]=func
+        self._encoders[cls]=func
         return func
 
     def decode_register(self, keys):
         def wrapper(func):
             if isinstance(keys, int):
-                self.decoders[keys]=func
+                self._decoders[keys]=func
             else:
                 for key in keys:
-                    self.decoders[key]=func
+                    self._decoders[key]=func
             return func
         return wrapper
 
