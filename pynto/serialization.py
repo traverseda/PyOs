@@ -8,49 +8,58 @@ https://github.com/msgpack/msgpack/blob/master/spec.md
 #ToDo: Check everything for off-by-one errors
 
 from typing import Union, Tuple, FrozenSet, Iterable, Optional
+from typing import get_type_hints
 
 #baseImmutableTypes = Union[str,int,bool,float,bytes,slice,complex,None] #Ellipsis?
 #containerImmutableTypes = Union[FrozenSet['containerImmutableTypes'],
 #                                Tuple['containerImmutableTypes'],
 #                                baseImmutableTypes]
 
-from functools import singledispatch
+class Serializer:
+    def __init__(self):
+        self.decoders = dict()
+        self.encoders = dict()
 
-class Decoder(dict):
-    def __call__(self, data: bytes, internal=False):
-        data, out = self[data[0]](data)
+    def decode(self, data: bytes, internal=False):
+        data, out = self.decoders[data[0]](self, data)
         if internal: return data, out
         return out
-    def register(self, keys):
+
+    def encode(self, obj):
+        out = self.encoders[type(obj)](self, obj)
+        return out
+
+    def encode_register(self, func):
+        argname, cls = next(iter(get_type_hints(func).items()))
+        self.encoders[cls]=func
+        return func
+
+    def decode_register(self, keys):
         def wrapper(func):
             if isinstance(keys, int):
-                self[keys]=func
+                self.decoders[keys]=func
             else:
                 for key in keys:
-                    self[key]=func
+                    self.decoders[key]=func
             return func
         return wrapper
 
-decode=Decoder()
-
-@singledispatch
-def encode(obj) -> bytes:
-    raise NotImplementedError("Can't encode object of type "+str(type(obj)))
+serializer = Serializer()
 
 import struct
 
-@encode.register
-def encode_float(obj: float) -> bytes:
+@serializer.encode_register
+def encode_float(self, obj: float) -> bytes:
     return b'\xcb'+struct.pack("!d", obj)
 
-@decode.register((202,203))
-def decode_float(data: bytes) -> Tuple[bytes, float]:
+@serializer.decode_register((202,203))
+def decode_float(self, data: bytes) -> Tuple[bytes, float]:
     if data[0]==202: return data[5:], struct.unpack("!l",data[1:5])[0]
     if data[0]==203: return data[9:], struct.unpack("!d",data[1:9])[0]
     raise NotImplementedError
 
-@encode.register
-def encode_bin(obj: bytes) -> bytes:
+@serializer.encode_register
+def encode_bin(self, obj: bytes) -> bytes:
     if len(obj) < 256:
         return b"\xc4"+len(obj).to_bytes(1,byteorder="big")+obj
     elif len(obj) < 65_536:
@@ -59,8 +68,8 @@ def encode_bin(obj: bytes) -> bytes:
         return b"\xc6"+len(obj).to_bytes(4,byteorder="big")+obj
     raise NotImplementedError("Bytes is too big to encode")
 
-@decode.register((196,197,198))
-def decode_bin(data: bytes) -> Tuple[bytes, bytes]:
+@serializer.decode_register((196,197,198))
+def decode_bin(self, data: bytes) -> Tuple[bytes, bytes]:
     if data[0]==196:
         streamLength=data[1]
         data = data[2:]
@@ -74,55 +83,56 @@ def decode_bin(data: bytes) -> Tuple[bytes, bytes]:
     return data[streamLength:], data[:streamLength]
     raise NotImplementedError
 
-@encode.register
-def encode_bool(obj: bool) -> bytes:
+@serializer.encode_register
+def encode_bool(self, obj: bool) -> bytes:
     if obj: return b'\xc3'
     else: return b'\xc2'
 
-@decode.register((195,194,192))
-def decode_bool_nil(data: bytes):
+@serializer.decode_register((195,194,192))
+def decode_bool_nil(self, data: bytes):
     if data[0] == 195: return data[1:], True
     if data[0] == 194: return data[1:], False
     if data[0] == 192: return data[1:], None
 
-@encode.register
-def encode_tuple(obj: tuple) -> bytes:
+@serializer.encode_register
+def encode_tuple(self, obj: tuple) -> bytes:
     if len(obj) < 16:
         b = (144+len(obj)).to_bytes(1,byteorder="big")
+
     elif len(obj) < 65_536:
         b = b"\xdc"+len(obj).to_bytes(2,byteorder="big")
     elif len(obj) < 4_294_967_295:
         b = b"\xdd"+len(obj).to_bytes(4,byteorder="big")
     else: raise ValueError("Tuple too long")
     for item in obj:
-        b+=encode(item)
+        b+=self.encode(item)
     return b
 
-def decode_tuple_inner(data:bytes, arrayLength):
+def decode_tuple_inner(self, data:bytes, arrayLength):
     out=[]
     for i in range(arrayLength):
-        data, obj = decode(data, internal=True)
+        data, obj = self.decode(data, internal=True)
         out.append(obj)
     return data, tuple(out)
 
-@decode.register(range(144,159+1))
-def decode_fixtuple(data: bytes) -> tuple:
+@serializer.decode_register(range(144,159+1))
+def decode_fixtuple(self, data: bytes) -> tuple:
     arrayLength = data[0]-144
     data = data[1:]
-    return decode_tuple_inner(data,arrayLength)
+    return decode_tuple_inner(self, data,arrayLength)
 
-@decode.register((220,221))
-def decode_tuple(data: bytes) -> tuple:
+@serializer.decode_register((220,221))
+def decode_tuple(self, data: bytes) -> tuple:
     if data[0] == 220:
         arrayLength = int.from_bytes(data[1:3],byteorder="big")
         data=data[3:]
     elif data[0] == 221:
         arrayLength = int.from_bytes(data[1:5],byteorder="big")
         data=data[5:]
-    return decode_tuple_inner(data,arrayLength)
+    return decode_tuple_inner(self, data,arrayLength)
 
-@encode.register
-def encode_str(obj: str) -> bytes:
+@serializer.encode_register
+def encode_str(self, obj: str) -> bytes:
     objBytes = obj.encode("utf-8")
     if len(objBytes) < 31: #Fixstring
         typeId = (160+len(objBytes)).to_bytes(1, byteorder='big')
@@ -138,14 +148,14 @@ def encode_str(obj: str) -> bytes:
         That means it's more than ~4.29GB!\
         That's way too big for this implementation on 2020 hardware.")
 
-@decode.register(range(160,191+1))
-def decode_fixstr(data: bytes) -> Tuple[bytes,str]:
+@serializer.decode_register(range(160,191+1))
+def decode_fixstr(self, data: bytes) -> Tuple[bytes,str]:
     bytesLength = data[0]-160
     data = data[1:]
     return data[bytesLength:], data[:bytesLength].decode("utf-8")
 
-@decode.register(range(217,219+1))
-def decode_str(data: bytes) -> Tuple[bytes,str]:
+@serializer.decode_register(range(217,219+1))
+def decode_str(self, data: bytes) -> Tuple[bytes,str]:
     if data[0]==217: bytesLength=1
     elif data[0]==218: bytesLength=2
     elif data[0]==219: bytesLength=4
@@ -156,12 +166,12 @@ def decode_str(data: bytes) -> Tuple[bytes,str]:
     # the unicode data is.
     return data[streamLength:], data[:streamLength].decode("utf-8")
 
-@encode.register
-def encode_none(obj: None) -> bytes:
+@serializer.encode_register
+def encode_none(self, obj: None) -> bytes:
     return b'\xc0'
 
-@encode.register
-def encode_int(obj: int) -> bytes:
+@serializer.encode_register
+def encode_int(self, obj: int) -> bytes:
     if 128 > obj > -1: #positive fixint
         return obj.to_bytes(1,byteorder='big')
     elif 0 > obj > -33: #negative fixint
@@ -185,20 +195,20 @@ def encode_int(obj: int) -> bytes:
 
     raise ValueError("Integer is not encodable: "+str(obj))
 
-@decode.register(range(0,127+1))
-def decode_fixint(data: bytes) -> Tuple[bytes, int]:
+@serializer.decode_register(range(0,127+1))
+def decode_fixint(self, data: bytes) -> Tuple[bytes, int]:
     return data[1:], data[0]
-@decode.register(range(224,256))
-def decode_neg_fixint(data: bytes) -> Tuple[bytes, int]:
+@serializer.decode_register(range(224,256))
+def decode_neg_fixint(self, data: bytes) -> Tuple[bytes, int]:
     return data[1:], data[0]-256
 
-@decode.register(range(204,209))
-def decode_uint(data: bytes) -> Tuple[bytes, int]:
+@serializer.decode_register(range(204,209))
+def decode_uint(self, data: bytes) -> Tuple[bytes, int]:
     bytesLength = data[0]-203
     data = data[1:]
     return data[bytesLength:], int.from_bytes(data[:bytesLength],byteorder="big")
-@decode.register(range(208,212))
-def decode_int(data: bytes) -> Tuple[bytes, int]:
+@serializer.decode_register(range(208,212))
+def decode_int(self, data: bytes) -> Tuple[bytes, int]:
     bytesLength = data[0]-207
     data = data[1:]
     return data[bytesLength:], int.from_bytes(data[:bytesLength],byteorder="big",signed=True)

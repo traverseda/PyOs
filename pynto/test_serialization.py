@@ -1,10 +1,13 @@
-from serialization import encode, decode
+from serialization import serializer
 import msgpack
 import random
 import string
 random.seed(0)#We don't actually want random test cases
 #(See also: reproducable builds)
 #but we do want to generate random-ish data.
+encode = serializer.encode
+decode = serializer.decode
+
 
 sampleData = [
     1,-1,126,-31,200,-200,5000,-5000,
@@ -26,14 +29,14 @@ def print_id_usage():
     colors = ['\033[31m','\033[32m','\033[33m','\033[34m','\033[35m','\033[36m',
               '\033[91m','\033[92m','\033[93m','\033[94m','\033[95m','\033[96m']
     functionColors = {None:"\033[0m",}
-    for item in set(decode.values()):
+    for item in set(serializer.decoders.values()):
         color = colors.pop()
         functionColors[item]=color
         print(color+str(item)+"\033[0m")
     print("Available Ids")
     for i in range(256):
         h = hex(i).ljust(5)
-        function = decode.get(i,None)
+        function = serializer.decoders.get(i,None)
         c = functionColors[function]
         print(c+h+"\033[0m",end="")
     print("\n\n")

@@ -5,6 +5,7 @@ sytem". We're a long way from that goal, but you might find some of the
 sub-components generally useful.
 
 >Basically, Python can be seen as a dialect of Lisp with "traditional" syntax
+
 ~ [Peter Norvig](https://norvig.com/python-lisp.html)
 
 With that in mind, you can imagine PyOs as a modern lisp-machine OS, running on
@@ -32,6 +33,9 @@ rpyc was hard to use.
 Current Status: Imaginary
 
 A mostly side-effect free UI library inspired by react and imgui. Makes heavy
-use of caching. Despite being "immediate mode", is still reasonably efficiant
+use of caching, thanks to our functional core.
+Despite being "immediate mode", is still reasonably efficient sending draw calls
 over the network.
 
+Imgui is by far the easiest UI framework I've ever used, and I think with a
+caching layer it can have performance on par with retained-mode UIs.
